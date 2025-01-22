@@ -1,0 +1,1 @@
+#define SHUTTER_BUTTON 12 // pin 16 makes it crash - idk why
