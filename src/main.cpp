@@ -2,8 +2,13 @@
 #include <esp_camera.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
+
 #include <Adafruit_I2CDevice.h>
 #include <SPI.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include "Oled.h"
 
 #include <FS.h>               // File system support
 #include <SD_MMC.h>           // SD card access over SDMMC
@@ -17,12 +22,10 @@
 // Define EEPROM size (1 byte in this case) for storing persistent data
 #define EEPROM_SIZE 1
 
-// pin definitions
-#define CAMERA_MODEL_WROVER_KIT // Has PSRAM
-#include "camera_pins.h"
-
 #include "Pindef.h"
 #include "Secrets.h"
+
+#define SER_DBG
 
 camera_config_t config;
 
@@ -38,7 +41,6 @@ char ftp_pass[] = FTP_PASS;
 
 ESP32_FTPClient ftp(ftp_server, ftp_port, ftp_user, ftp_pass, 5000, 0); // Disable Debug to increase Tx Speed
 
-// void startCameraServer();
 void camera_init();
 void take_photo();
 void readAndSendBigBinFile(fs::FS &fs, const char *path, ESP32_FTPClient ftpClient);
@@ -52,21 +54,29 @@ void setup()
   // Disable brownout detector to prevent resets due to low voltage
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
 
+#ifdef SER_DBG
   Serial.begin(115200);
   Serial.setDebugOutput(true);
-  Serial.println();
+#else
+  Serial.setDebugOutput(false);
+#endif
 
-  WiFi.begin(WIFI_ONE, WIFI_ONEP);
+  initOled();
 
-  Serial.println("Connecting Wifi...");
+  pinMode(SHUTTER_BUTTON, INPUT);
+
+  delay(2000);
+
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+  msg("Connecting Wifi...", "Cnting WIFI");
   while (WiFi.status() != WL_CONNECTED)
   {
     delay(500);
-    Serial.print(".");
   }
-  Serial.println("WIFI Connected");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+  // msg("WIFI Connected", "WIFI Cnnted");
+  // Serial.print("IP address: ");
+  // Serial.println(WiFi.localIP());
 
   delay(500);
 
@@ -76,11 +86,11 @@ void setup()
 
   if (ftp.isConnected())
   {
-    Serial.println("FTP CONNECTED");
+    msg("FTP CONNECTED", "FTP True");
   }
   else
   {
-    Serial.println("FTP NOT CONNECTED");
+    msg("FTP NOT CONNECTED", "FTP False");
   }
 
   camera_init();
@@ -89,7 +99,7 @@ void setup()
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK)
   {
-    Serial.printf("Camera init failed with error 0x%x", err);
+    // Serial.printf("Camera init failed with error 0x%x", err);
     return;
   }
 
@@ -100,17 +110,16 @@ void setup()
   s->set_saturation(s, -1); // lower the saturation
 
   SD_MMC.setPins(SD_MMC_CLK, SD_MMC_CMD, SD_MMC_D0);
-  Serial.println("Pwr on done!");
 
   delay(1000);
   if (!SD_MMC.begin("/sdcard", true, true, SDMMC_FREQ_DEFAULT, 5))
   {
-    Serial.println("SD Card Mount Failed");
+    msg("SD Card Mount Failed", "SD Mount Failed");
     return;
   }
   else
   {
-    Serial.println("SD mount success");
+    msg("SD mount success", "SD Mount Success");
   }
   delay(2000);
 }
@@ -120,20 +129,21 @@ bool flag = false;
 void loop()
 {
 
-  if (!flag)
+  if (!flag || digitalRead(SHUTTER_BUTTON))
   {
     flag = true;
+    msg("Taking photo");
     take_photo();
   }
 
   if (millis() >= lastPhotoMillis + SYS_IDLE_TIMEOUT && !timedOut)
   {
     timedOut = true;
-    Serial.println("System idle, shutting down now");
+    msg("System idle, shutting down now", "Sys idle");
     esp_err_t err = esp_camera_deinit();
     if (err != ESP_OK)
     {
-      Serial.printf("Camera deinit failed with error 0x%x", err);
+      // Serial.printf("Camera deinit failed with error 0x%x", err);
       return;
     }
 
@@ -171,16 +181,14 @@ void camera_init()
   config.frame_size = FRAMESIZE_QVGA;
   config.pixel_format = PIXFORMAT_JPEG; // for streaming
   // config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
-  config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+  config.grab_mode = CAMERA_GRAB_LATEST;
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 10;
-  config.fb_count = 2;
 
   // Configure camera settings based on PSRAM availability
   if (psramFound())
   {
     config.frame_size = FRAMESIZE_UXGA; // High resolution (UXGA)
-    config.jpeg_quality = 10;           // High quality (lower number = better)
+    config.jpeg_quality = 8;            // High quality (lower number = better)
     config.fb_count = 2;                // Double buffer for better performance
   }
   else
@@ -196,26 +204,25 @@ void take_photo()
   camera_fb_t *fb = NULL; // Frame buffer pointer
 
   // Capture an image with the camera
-  Serial.println("Getting FB");
+  msg("Getting Frame Buffer", "Capturing img");
   fb = esp_camera_fb_get();
   if (!fb)
   {
-    Serial.println("Camera capture failed");
+    msg("Getting Frame Buffer failed", "Capture Failed");
     return;
   }
 
-  delay(500);
+  // delay(500);
 
   // Check if SD card is present
   uint8_t cardType = SD_MMC.cardType();
   if (cardType == CARD_NONE)
   {
-    Serial.println("No SD Card attached");
+    msg("No SD Card attached", "NO SD Found");
     return;
   }
 
   // Initialize EEPROM and retrieve the picture number
-  Serial.println("Increasing EEPROM");
   EEPROM.begin(EEPROM_SIZE);
   pictureNumber = EEPROM.read(0) + 1;
 
@@ -226,20 +233,19 @@ void take_photo()
   String path = "/aa2_" + String(secureNum) + "_" + String(pictureNumber) + ".jpg";
 
   // Save the image to the SD card
-  Serial.println("FS stuff");
-  Serial.println("Opening FS");
+  msg("Opening Filesystem", "Opening FS");
   fs::FS &fs = SD_MMC;
-  Serial.println("Opening FS File");
+  msg("Opening FS File", "OPN FS FILE");
   File file = fs.open(path.c_str(), FILE_WRITE);
   if (!file)
   {
 
-    Serial.printf("Failed to open file: %s\n", path);
+    // Serial.printf("Failed to open file: %s\n", path);
   }
   else
   {
     file.write(fb->buf, fb->len); // Write image data to the file
-    Serial.printf("Saved file to path: %s\n", path.c_str());
+    // Serial.printf("Saved file to path: %s\n", path.c_str());
 
     // Update and commit picture number in EEPROM
     EEPROM.write(0, pictureNumber);
@@ -247,33 +253,34 @@ void take_photo()
   }
   file.close(); // Close the file
 
-  delay(1000);
-  Serial.println("File closed");
+  // delay(1000);
+  msg("File closed");
   esp_camera_fb_return(fb); // Release frame buffer memory
-  Serial.println("FB cleared");
+  msg("Frame Buffer cleared", "Capture cleared");
 
   char the_path[32];
   snprintf(the_path, sizeof(the_path), "/aa2_%d_%d.jpg", secureNum, pictureNumber);
 
   if (SD_MMC.exists(the_path))
   {
-    Serial.println("File exists. Sending to FTP...");
+    msg("File exists. Sending to FTP...", "SND FTP File");
     readAndSendBigBinFile(SD_MMC, the_path, ftp);
   }
   else
   {
-    Serial.println("File does not exist on SD card.");
+    msg("File does not exist on SD card.", "File nt Found");
   }
 
   delay(250);
-  Serial.println("Finished Photo process");
-  delay(1000);
-  Serial.println("Ready");
+  msg("Finished Photo process", "Photo done");
+  delay(250);
+  // delay(1000);
+  msg("Ready");
 }
 
 void readAndSendBigBinFile(fs::FS &fs, const char *path, ESP32_FTPClient ftpClient)
 {
-  Serial.printf("Attempting to read file: %s\n", path);
+  // Serial.printf("Attempting to read file: %s\n", path);
 
   ftpClient.InitFile("Type I");
   ftpClient.NewFile(path);
@@ -281,11 +288,11 @@ void readAndSendBigBinFile(fs::FS &fs, const char *path, ESP32_FTPClient ftpClie
   File file = fs.open(path);
   if (!file)
   {
-    Serial.printf("Failed to open file for reading: %s\n", path);
+    // Serial.printf("Failed to open file for reading: %s\n", path);
     return;
   }
 
-  Serial.println("Reading file contents...");
+  msg("Reading file contents...", "Rding File...");
   while (file.available())
   {
     unsigned char buf[1024];
