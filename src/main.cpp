@@ -44,6 +44,9 @@ ESP32_FTPClient ftp(ftp_server, ftp_port, ftp_user, ftp_pass, 5000, 0); // Disab
 void camera_init();
 void take_photo();
 void readAndSendBigBinFile(fs::FS &fs, const char *path, ESP32_FTPClient ftpClient);
+bool shutterPressed();
+
+#define shutterTouchThreshold 20 // difference threshold to detect shutter button pressed
 
 #define SD_MMC_CMD 15 // Please do not modify it.
 #define SD_MMC_CLK 14 // Please do not modify it.
@@ -53,6 +56,11 @@ void setup()
 {
   // Disable brownout detector to prevent resets due to low voltage
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
+  esp_log_level_set("camera", ESP_LOG_VERBOSE);
+
+  // pinMode(13, OUTPUT);
+  // digitalWrite(13, HIGH);
 
 #ifdef SER_DBG
   Serial.begin(115200);
@@ -69,7 +77,7 @@ void setup()
 
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 
-  msg("Connecting Wifi...", "Cnting WIFI");
+  msg("Connecting Wifi...", "Cting Wifi");
   while (WiFi.status() != WL_CONNECTED)
   {
     delay(500);
@@ -103,11 +111,27 @@ void setup()
     return;
   }
 
+  // this was code that works with the OV3660 Camera from the Freenove Wrover
+  // sensor_t *s = esp_camera_sensor_get();
+  // s->set_vflip(s, 0);       // 1-Upside down, 0-No operation
+  // s->set_hmirror(s, 0);     // 1-Reverse left and right, 0-No operation
+  // s->set_brightness(s, 1);  // up the blightness just a bit
+  // s->set_saturation(s, -1); // lower the saturation
+
   sensor_t *s = esp_camera_sensor_get();
-  s->set_vflip(s, 0);       // 1-Upside down, 0-No operation
-  s->set_hmirror(s, 0);     // 1-Reverse left and right, 0-No operation
-  s->set_brightness(s, 1);  // up the blightness just a bit
-  s->set_saturation(s, -1); // lower the saturation
+  if (s)
+  {
+    s->set_framesize(s, FRAMESIZE_UXGA); // Adjust frame size as needed
+    s->set_brightness(s, 0);             // Default brightness
+    s->set_contrast(s, 0);               // Default contrast
+    s->set_saturation(s, 0);             // Default saturation
+    s->set_gainceiling(s, GAINCEILING_2X);
+    s->set_sharpness(s, 0);
+    s->set_whitebal(s, 1); // Enable white balance
+    s->set_awb_gain(s, 1); // Enable AWB gain
+    s->set_hmirror(s, 0);  // No mirroring
+    s->set_vflip(s, 0);    // No flipping
+  }
 
   SD_MMC.setPins(SD_MMC_CLK, SD_MMC_CMD, SD_MMC_D0);
 
@@ -129,11 +153,22 @@ bool flag = false;
 void loop()
 {
 
-  if (!flag || digitalRead(SHUTTER_BUTTON))
+  if (!flag || shutterPressed())
   {
     flag = true;
-    msg("Taking photo");
-    take_photo();
+    if (!timedOut)
+    {
+      msg("Taking photo");
+      take_photo();
+    }
+    else
+    {
+      msg("awaking");
+      timedOut = false;
+      camera_init();
+      delay(4000);
+      take_photo();
+    }
   }
 
   if (millis() >= lastPhotoMillis + SYS_IDLE_TIMEOUT && !timedOut)
@@ -180,23 +215,25 @@ void camera_init()
   config.xclk_freq_hz = 20000000;
   config.frame_size = FRAMESIZE_QVGA;
   config.pixel_format = PIXFORMAT_JPEG; // for streaming
-  // config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
-  config.grab_mode = CAMERA_GRAB_LATEST;
+                                        // config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
   config.fb_location = CAMERA_FB_IN_PSRAM;
+  config.jpeg_quality = 10;
+  config.fb_count = 2;
 
   // Configure camera settings based on PSRAM availability
   if (psramFound())
   {
-    config.frame_size = FRAMESIZE_UXGA; // High resolution (UXGA)
-    config.jpeg_quality = 8;            // High quality (lower number = better)
-    config.fb_count = 2;                // Double buffer for better performance
+    config.frame_size = FRAMESIZE_UXGA; // Adjust as needed
+    config.jpeg_quality = 15;           // Reduce quality to save memory
+    config.fb_count = 2;                // Single framebuffer
   }
   else
   {
-    config.frame_size = FRAMESIZE_SVGA; // Lower resolution
-    config.jpeg_quality = 12;           // Lower quality
-    config.fb_count = 1;                // Single buffer
+    config.frame_size = FRAMESIZE_SVGA;
+    config.jpeg_quality = 20;
+    config.fb_count = 1;
   }
+  config.grab_mode = CAMERA_GRAB_LATEST;
 }
 
 void take_photo()
@@ -301,4 +338,15 @@ void readAndSendBigBinFile(fs::FS &fs, const char *path, ESP32_FTPClient ftpClie
   }
   ftpClient.CloseFile();
   file.close();
+}
+
+bool shutterPressed()
+{
+  static int initialReading = touchRead(SHUTTER_BUTTON);
+
+  if (touchRead(SHUTTER_BUTTON) <= initialReading - shutterTouchThreshold)
+  {
+    return true;
+  }
+  return false;
 }
