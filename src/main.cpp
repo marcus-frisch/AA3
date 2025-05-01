@@ -32,7 +32,7 @@ camera_config_t config;
 int pictureNumber = 0; // Counter to keep track of picture numbers
 unsigned long lastPhotoMillis = 0;
 bool timedOut = false;
-#define SYS_IDLE_TIMEOUT 300000 // system idle timeout in millis 5mins
+#define SYS_IDLE_TIMEOUT 1200000 // system idle timeout in millis 5mins
 
 char ftp_server[] = FTP_ADDR;
 uint16_t ftp_port = FTP_PORT;
@@ -46,7 +46,7 @@ void take_photo();
 void readAndSendBigBinFile(fs::FS &fs, const char *path, ESP32_FTPClient ftpClient);
 bool shutterPressed();
 
-#define shutterTouchThreshold 20 // difference threshold to detect shutter button pressed
+#define shutterTouchThreshold 9 // difference threshold to detect shutter button pressed
 
 #define SD_MMC_CMD 15 // Please do not modify it.
 #define SD_MMC_CLK 14 // Please do not modify it.
@@ -57,6 +57,7 @@ void setup()
   // Disable brownout detector to prevent resets due to low voltage
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
 
+  delay(5000);
   esp_log_level_set("camera", ESP_LOG_VERBOSE);
 
   // pinMode(13, OUTPUT);
@@ -69,11 +70,12 @@ void setup()
   Serial.setDebugOutput(false);
 #endif
 
+  delay(5000);
   initOled();
 
   pinMode(SHUTTER_BUTTON, INPUT);
 
-  delay(2000);
+  delay(5000);
 
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 
@@ -101,6 +103,7 @@ void setup()
     msg("FTP NOT CONNECTED", "FTP False");
   }
 
+  delay(5000);
   camera_init();
 
   // camera init
@@ -110,13 +113,6 @@ void setup()
     // Serial.printf("Camera init failed with error 0x%x", err);
     return;
   }
-
-  // this was code that works with the OV3660 Camera from the Freenove Wrover
-  // sensor_t *s = esp_camera_sensor_get();
-  // s->set_vflip(s, 0);       // 1-Upside down, 0-No operation
-  // s->set_hmirror(s, 0);     // 1-Reverse left and right, 0-No operation
-  // s->set_brightness(s, 1);  // up the blightness just a bit
-  // s->set_saturation(s, -1); // lower the saturation
 
   sensor_t *s = esp_camera_sensor_get();
   if (s)
@@ -329,7 +325,7 @@ void readAndSendBigBinFile(fs::FS &fs, const char *path, ESP32_FTPClient ftpClie
     return;
   }
 
-  msg("Reading file contents...", "Rding File...");
+  msg("Reading file contents...", "Uploding...");
   while (file.available())
   {
     unsigned char buf[1024];
@@ -343,6 +339,7 @@ void readAndSendBigBinFile(fs::FS &fs, const char *path, ESP32_FTPClient ftpClie
 bool shutterPressed()
 {
   static int initialReading = touchRead(SHUTTER_BUTTON);
+  // Serial.println("SHUTTER: " + String(touchRead(SHUTTER_BUTTON)));
 
   if (touchRead(SHUTTER_BUTTON) <= initialReading - shutterTouchThreshold)
   {

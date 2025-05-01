@@ -30,12 +30,12 @@ void initOled()
         for (;;)
             ;
     }
-
+    // display.dim(true); // Lowers brightness
     delay(500);
     display.clearDisplay();
     display.setTextWrap(false);
     display.setTextColor(WHITE);
-    display.setTextSize(4);
+    display.setTextSize(1);
     display.setCursor(0, 28);
     display.println("AA3");
     display.display();
@@ -49,11 +49,11 @@ void displayFocusOled()
     {
         display.setCursor(0, i);
         i = i + 8;
-        display.setTextSize(1);
-        display.println(screenLines[line]);
+        // display.setTextSize(1);
+        // display.println(screenLines[line]);
         line++;
     }
-    display.setTextSize(2);
+    display.setTextSize(1);
     display.setCursor(0, 48);
     display.println(screenLines[line]);
     display.display();
